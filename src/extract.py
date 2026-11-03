@@ -13,6 +13,7 @@ from src.config import Settings
 TRAFFIC_COLUMNS = (
     "link_id,link_name,borough,speed,travel_time,status,data_as_of"
 )
+TRAFFIC_REQUIRED_FIELDS = {"link_id", "speed", "travel_time", "status", "data_as_of"}
 
 
 def _get_json(url: str, params: dict, timeout: int = 30, attempts: int = 3) -> object:
@@ -51,8 +52,21 @@ def fetch_traffic(settings: Settings) -> pd.DataFrame:
                         "$offset": offset,
                     },
                 )
-                if not isinstance(records, list) or not records:
+                if not isinstance(records, list):
+                    raise RuntimeError(
+                        "NYC DOT returned an unexpected traffic response; expected a JSON list."
+                    )
+                if not records:
                     break
+                if any(
+                    not isinstance(record, dict)
+                    or TRAFFIC_REQUIRED_FIELDS.difference(record)
+                    for record in records
+                ):
+                    raise RuntimeError(
+                        "NYC DOT returned traffic rows missing required fields: "
+                        f"{sorted(TRAFFIC_REQUIRED_FIELDS)}"
+                    )
                 frames.append(pd.DataFrame(records))
                 offset += len(records)
                 if len(records) < settings.page_size:
@@ -67,7 +81,7 @@ def fetch_traffic(settings: Settings) -> pd.DataFrame:
 
 
 def fetch_weather(settings: Settings) -> pd.DataFrame:
-    """Hourly temperature and rain for the same local dates as the traffic pull."""
+    """Hourly temperature and rain, labelled with the hour the interval begins."""
     payload = _get_json(
         settings.weather_url,
         {
@@ -96,7 +110,11 @@ def fetch_weather(settings: Settings) -> pd.DataFrame:
             "precipitation": "precipitation_mm",
         }
     )
-    weather["hour_start"] = pd.to_datetime(weather["hour_start"])
+    # Open-Meteo's value stamped 15:00 is the accumulation over 14:00–15:00.
+    # Store it under 14:00 so it joins traffic observed during that same hour.
+    weather["hour_start"] = (
+        pd.to_datetime(weather["hour_start"]) - pd.Timedelta(hours=1)
+    )
     for column in ("temperature_c", "rain_mm", "precipitation_mm"):
         weather[column] = pd.to_numeric(weather[column], errors="coerce")
     weather["location_id"] = settings.location_id

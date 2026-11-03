@@ -9,31 +9,30 @@ The working question for this load is: for the selected NYC DOT links, how do ho
 `api_test.ipynb` confirmed two APIs and cleaned one week of traffic for a single road:
 
 - NYC DOT real-time traffic speeds, dataset `i4gi-tjb9`
-- Open-Meteo hourly weather for lower Manhattan
+- Open-Meteo hourly weather at the selected Bronx road's midpoint
 - Link `4616253`, CBE E Taylor Avenue – Castle Hill Avenue in the Bronx, 19–25 October 2026
 
 That notebook pull is not the saved dataset. The pipeline in `src/` repeats the extract, then goes further:
 
 1. `src/extract.py` downloads traffic one day at a time and downloads hourly temperature, rain, and precipitation for the same local dates.
 2. `src/transform.py` keeps readings whose status is `0`, drops bad timestamps, and averages the roughly 5-minute speeds and travel times up to the hour.
-3. The join key is that local hour in `America/New_York`.
-4. `src/load_mysql.py` writes separate weather and traffic tables and exposes the join as `vw_hourly_weather_traffic`.
+3. NYC DOT's unoffset `data_as_of` values are treated as `America/New_York`
+   local time. Open-Meteo is requested in that same timezone.
+4. Open-Meteo stamps hourly rain at the end of its accumulation interval, so
+   rainfall stamped 3 PM is stored and joined to traffic from 2–3 PM.
+5. `src/load_mysql.py` writes separate weather and traffic tables and exposes the join as `vw_hourly_weather_traffic`.
 
 The default window is **1–25 October 2026**, not only the notebook week. That week was dry. The longer window includes earlier October rain, including about 61 mm on 11 October, so rain hours and dry hours can be compared.
 
-One run of that window produced:
+The command output reports the extracted, cleaned, joined, and rain-hour counts
+for each run. Those values can change as the source APIs revise historical data.
+The rainy-versus-dry comparison only checks the join; it is not a regression or
+an A/B test.
 
-| Step | Rows |
-|---|---|
-| Raw traffic readings | 6,722 |
-| After cleaning | 6,716 |
-| Weather hours stored | 600 |
-| Joined hourly rows | 562 |
-| Rain hours | 42 |
-
-On this one link, rainy hours averaged about 80 seconds of travel time and 34 mph. Dry hours averaged about 76 seconds and 38 mph. That comparison only checks the join. It is not a regression or an A/B test.
-
-Weather is one citywide point (latitude `40.7128`, longitude `-74.0060`). Traffic is still one Bronx segment. Some hours have weather but no traffic reading, which is why 600 weather hours become 562 joined rows.
+Weather is taken at the selected Bronx segment's midpoint (latitude `40.83242`,
+longitude `-73.85833`). Missing rain remains unknown (`NULL` / nullable
+`is_raining`) rather than being treated as dry. Some hours have weather but no
+traffic reading, so the weather and joined-row counts can differ.
 
 ## Where the data lives
 
@@ -41,7 +40,7 @@ The rows are in a local MySQL database named `weather_traffic`. They are not com
 
 | Object | Contents |
 |---|---|
-| `locations` | The NYC weather point |
+| `locations` | The Bronx road weather point |
 | `road_links` | Link id, road name, and borough |
 | `weather_hourly` | Temperature (°C) and rain (mm) |
 | `traffic_hourly` | Average speed (mph), average travel time (seconds), and reading count |

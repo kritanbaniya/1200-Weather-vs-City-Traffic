@@ -8,9 +8,18 @@ import pandas as pd
 # with zero speed and zero travel time in the sample week.
 
 
-def clean_traffic(traffic: pd.DataFrame) -> pd.DataFrame:
+def clean_traffic(
+    traffic: pd.DataFrame, timezone: str = "America/New_York"
+) -> pd.DataFrame:
+    """Clean NYC DOT readings whose unoffset timestamps are New York local time."""
     cleaned = traffic.copy()
     cleaned["data_as_of"] = pd.to_datetime(cleaned["data_as_of"], errors="coerce")
+    # Validate the source timestamps against the documented local timeline while
+    # retaining naive local values for MySQL DATETIME and the Open-Meteo join.
+    localized = cleaned["data_as_of"].dt.tz_localize(
+        timezone, ambiguous="NaT", nonexistent="shift_forward"
+    )
+    cleaned["data_as_of"] = localized.dt.tz_localize(None)
     cleaned["speed"] = pd.to_numeric(cleaned["speed"], errors="coerce")
     cleaned["travel_time"] = pd.to_numeric(cleaned["travel_time"], errors="coerce")
     status = pd.to_numeric(cleaned["status"], errors="coerce")
@@ -45,11 +54,17 @@ def aggregate_traffic(traffic: pd.DataFrame) -> pd.DataFrame:
 
 
 def join_weather(traffic_hourly: pd.DataFrame, weather: pd.DataFrame) -> pd.DataFrame:
-    """Left-join city weather onto each road-link hour."""
+    """Left-join weather accumulated during each road-link hour."""
     weather_columns = weather[
         ["hour_start", "temperature_c", "rain_mm", "precipitation_mm"]
     ]
     joined = traffic_hourly.merge(weather_columns, on="hour_start", how="left")
-    joined["is_raining"] = joined["rain_mm"].gt(0).astype("int64")
+    # Nullable integer preserves missing rainfall as unknown rather than dry.
+    joined["is_raining"] = (
+        joined["rain_mm"]
+        .gt(0)
+        .where(joined["rain_mm"].notna())
+        .astype("Int64")
+    )
     joined["temperature_f"] = (joined["temperature_c"] * 9 / 5 + 32).round(2)
     return joined

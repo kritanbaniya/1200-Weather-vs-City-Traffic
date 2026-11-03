@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -106,7 +107,11 @@ def load(
                 ],
             )
 
-            hour_start = settings.start_date + " 00:00:00"
+            # Weather labels are shifted one hour earlier because Open-Meteo
+            # stamps accumulated rain at the end of its observation interval.
+            hour_start = datetime.strptime(
+                settings.start_date, "%Y-%m-%d"
+            ) - timedelta(hours=1)
             hour_end = settings.end_date + " 23:59:59"
             cursor.execute(
                 """
@@ -144,7 +149,7 @@ def load(
                 WHERE link_id IN ({placeholders})
                   AND hour_start BETWEEN %s AND %s
                 """,
-                (*link_ids, hour_start, hour_end),
+                (*link_ids, settings.start_date + " 00:00:00", hour_end),
             )
             _executemany(
                 cursor,

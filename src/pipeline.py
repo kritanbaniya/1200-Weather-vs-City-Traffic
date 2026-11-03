@@ -18,7 +18,9 @@ def _print_summary(
     joined: pd.DataFrame,
 ) -> None:
     matched = joined["temperature_c"].notna()
-    raining = joined["rain_mm"].gt(0)
+    weather_known = joined["rain_mm"].notna()
+    raining = weather_known & joined["rain_mm"].gt(0)
+    dry = weather_known & joined["rain_mm"].eq(0)
     print("\nJOIN SUMMARY")
     print(f"Raw traffic rows: {raw_rows}")
     print(f"Clean traffic rows: {clean_rows}")
@@ -27,11 +29,11 @@ def _print_summary(
     print(f"Hours missing weather: {int((~matched).sum())}")
     print(f"Rain hours: {int(raining.sum())}")
 
-    if raining.any() and (~raining & matched).any():
+    if raining.any() and dry.any():
         rain_time = joined.loc[raining, "avg_travel_time_sec"].mean()
-        dry_time = joined.loc[~raining & matched, "avg_travel_time_sec"].mean()
+        dry_time = joined.loc[dry, "avg_travel_time_sec"].mean()
         rain_speed = joined.loc[raining, "avg_speed_mph"].mean()
-        dry_speed = joined.loc[~raining & matched, "avg_speed_mph"].mean()
+        dry_speed = joined.loc[dry, "avg_speed_mph"].mean()
         print(f"Avg travel time, rain hours: {rain_time:.1f} sec")
         print(f"Avg travel time, dry hours: {dry_time:.1f} sec")
         print(f"Avg speed, rain hours: {rain_speed:.1f} mph")
@@ -63,7 +65,7 @@ def run(settings: Settings, skip_load: bool = False) -> pd.DataFrame:
     )
 
     raw_traffic = fetch_traffic(settings)
-    clean = clean_traffic(raw_traffic)
+    clean = clean_traffic(raw_traffic, settings.traffic_timezone)
     traffic_hourly = aggregate_traffic(clean)
     weather = fetch_weather(settings)
     joined = join_weather(traffic_hourly, weather)

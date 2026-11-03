@@ -12,11 +12,13 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(PROJECT_ROOT / ".env")
 
-# Same point used in api_test.ipynb (lower Manhattan).
-NYC_LATITUDE = 40.7128
-NYC_LONGITUDE = -74.0060
-NYC_LOCATION_ID = 1
-NYC_LOCATION_NAME = "New York City"
+# Midpoint of link 4616253, CBE E Taylor Avenue – Castle Hill Avenue, Bronx.
+# NYC DOT's link geometry runs from (40.8347204, -73.86593) to
+# (40.8301105, -73.850731).
+BRONX_LATITUDE = 40.83242
+BRONX_LONGITUDE = -73.85833
+BRONX_LOCATION_ID = 1
+BRONX_LOCATION_NAME = "Bronx - CBE E Taylor Avenue / Castle Hill Avenue"
 
 
 def _link_ids(raw: str) -> tuple[str, ...]:
@@ -30,10 +32,12 @@ def _link_ids(raw: str) -> tuple[str, ...]:
 class Settings:
     traffic_url: str = "https://data.cityofnewyork.us/resource/i4gi-tjb9.json"
     weather_url: str = "https://archive-api.open-meteo.com/v1/archive"
-    latitude: float = NYC_LATITUDE
-    longitude: float = NYC_LONGITUDE
-    location_id: int = NYC_LOCATION_ID
-    location_name: str = NYC_LOCATION_NAME
+    latitude: float = BRONX_LATITUDE
+    longitude: float = BRONX_LONGITUDE
+    location_id: int = BRONX_LOCATION_ID
+    location_name: str = BRONX_LOCATION_NAME
+    # NYC DOT's unoffset data_as_of values are local New York civil time.
+    traffic_timezone: str = "America/New_York"
     timezone: str = "America/New_York"
     start_date: str = "2026-10-01"
     end_date: str = "2026-10-25"
