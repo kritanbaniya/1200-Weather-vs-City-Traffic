@@ -102,6 +102,9 @@ loader adds `road_links.location_id` and recreates the view.
 separate set of tables defined in `sql/full_year_schema.sql`. It does not read
 or write the tables above.
 
+New to MySQL? Follow [docs/MYSQL_SETUP.md](docs/MYSQL_SETUP.md) for the
+step-by-step Workbench, Python and Tableau setup.
+
 | Object | Contents |
 |---|---|
 | `weather_points` | Open-Meteo request points (the five borough points for now; `point_type = 'link'` is reserved for segment midpoints) and the grid cell each one snapped to |
