@@ -96,6 +96,44 @@ loader adds `road_links.location_id` and recreates the view.
 
 `--skip-load` still calls the APIs and prints the join summary, without writing to MySQL. A full run replaces the requested date window and leaves rows outside that window in place.
 
+## Full-year load (all links)
+
+`src/bulk_load.py` loads every DOT link, not just the selected ones, into a
+separate set of tables defined in `sql/full_year_schema.sql`. It does not read
+or write the tables above.
+
+| Object | Contents |
+|---|---|
+| `weather_points` | Open-Meteo request points (the five borough points for now; `point_type = 'link'` is reserved for segment midpoints) and the grid cell each one snapped to |
+| `dot_links` | Every link that reported: name, borough, owner, raw `link_points`, a midpoint for maps, its weather point, first/last seen |
+| `dot_traffic_hourly` | Per link-hour: avg/median/min/max speed (mph), avg/max travel time (s), reading count. Valid readings only (`status = '0'`, speed > 0) |
+| `weather_point_hourly` | Per point-hour: temperature (°C), precipitation/rain (mm), snowfall (cm), WMO weather code, wind at 10 m (km/h) |
+| `load_chunks` | Which date chunks are loaded, so a stopped run resumes |
+| `vw_traffic_weather_hourly` | The joined view for Tableau, with °F, inches, mph, weekday and rain/snow flags |
+
+```bash
+mysql -u root < sql/setup_database.sql      # once: database + weather user
+mysql -u root < sql/full_year_schema.sql    # once (the loader also applies it)
+python -m src.bulk_load                     # 2025-10-01 .. today minus 5 days
+```
+
+- Traffic is aggregated to the hour by NYC Open Data's server, one request per
+  week plus one for link details, so a year is about 115 requests. Expect
+  roughly 20-30 minutes and about 550-600k link-hours.
+- Weather comes from the Open-Meteo archive in 92-day chunks. It is requested
+  in UTC and converted to New York time, so DST days have 23 or 24 hours with
+  no duplicates. Precipitation, rain and snowfall are moved back one hour
+  (Open-Meteo stamps them at the end of the hour they cover); temperature,
+  wind and weather code are the values at the start of the hour.
+- The end date defaults to five days ago because the weather archive lags.
+- Every chunk is committed on its own. Re-running skips loaded chunks; add
+  `--force` to re-fetch them.
+- Earlier years later: `python -m src.bulk_load --start 2024-10-01 --end 2025-09-30`.
+- `--dry-run` fetches without touching MySQL. `--traffic-only` and
+  `--weather-only` do one side.
+- Optional: put a free NYC Open Data app token in `.env` as `NYC_APP_TOKEN`
+  to avoid throttling.
+
 ## Tableau
 
 1. Tableau Desktop → Connect → MySQL.
