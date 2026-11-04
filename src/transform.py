@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from src.config import location_for_borough
+
 # NYC DOT uses status 0 for a normal reading. -101 showed up as a sensor flag
 # with zero speed and zero travel time in the sample week.
 
@@ -53,12 +55,37 @@ def aggregate_traffic(traffic: pd.DataFrame) -> pd.DataFrame:
     return hourly
 
 
+def assign_weather_locations(traffic_hourly: pd.DataFrame) -> pd.DataFrame:
+    """Tag each road link with its borough's weather point.
+
+    A link whose borough is missing or unrecognised gets a null location_id,
+    so its weather stays unknown instead of borrowing another borough's.
+    """
+    tagged = traffic_hourly.copy()
+    tagged["location_id"] = pd.array(
+        [
+            location.location_id if location else None
+            for location in map(location_for_borough, tagged["borough"])
+        ],
+        dtype="Int64",
+    )
+    unmatched = tagged.loc[tagged["location_id"].isna(), "link_id"].unique()
+    if len(unmatched):
+        print(
+            "No weather point for links with unknown borough: "
+            + ", ".join(map(str, unmatched))
+        )
+    return tagged
+
+
 def join_weather(traffic_hourly: pd.DataFrame, weather: pd.DataFrame) -> pd.DataFrame:
-    """Left-join weather accumulated during each road-link hour."""
+    """Left-join the weather from each link's own borough point, hour by hour."""
     weather_columns = weather[
-        ["hour_start", "temperature_c", "rain_mm", "precipitation_mm"]
-    ]
-    joined = traffic_hourly.merge(weather_columns, on="hour_start", how="left")
+        ["location_id", "hour_start", "temperature_c", "rain_mm", "precipitation_mm"]
+    ].astype({"location_id": "Int64"})
+    joined = traffic_hourly.merge(
+        weather_columns, on=["location_id", "hour_start"], how="left"
+    )
     # Nullable integer preserves missing rainfall as unknown rather than dry.
     joined["is_raining"] = (
         joined["rain_mm"]

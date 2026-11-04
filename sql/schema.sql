@@ -1,4 +1,4 @@
--- Analytic tables for hourly NYC traffic joined to citywide weather.
+-- Analytic tables for hourly NYC traffic joined to per-borough weather.
 -- Tableau should connect to vw_hourly_weather_traffic.
 
 CREATE TABLE IF NOT EXISTS locations (
@@ -11,7 +11,10 @@ CREATE TABLE IF NOT EXISTS locations (
 CREATE TABLE IF NOT EXISTS road_links (
     link_id VARCHAR(32) PRIMARY KEY,
     link_name VARCHAR(255) NOT NULL,
-    borough VARCHAR(64) NULL
+    borough VARCHAR(64) NULL,
+    location_id INT NULL,
+    CONSTRAINT fk_road_link_location
+        FOREIGN KEY (location_id) REFERENCES locations (location_id)
 );
 
 CREATE TABLE IF NOT EXISTS weather_hourly (
@@ -45,6 +48,7 @@ SELECT
     t.link_id,
     r.link_name,
     r.borough,
+    l.name AS weather_location,
     t.avg_speed_mph,
     t.avg_travel_time_sec,
     t.reading_count,
@@ -60,6 +64,8 @@ SELECT
 FROM traffic_hourly AS t
 INNER JOIN road_links AS r
     ON r.link_id = t.link_id
+LEFT JOIN locations AS l
+    ON l.location_id = r.location_id
 LEFT JOIN weather_hourly AS w
     ON w.hour_start = t.hour_start
-    AND w.location_id = 1;
+    AND w.location_id = r.location_id;

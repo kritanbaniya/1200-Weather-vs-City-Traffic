@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Iterable
 from datetime import timedelta
 
 import pandas as pd
 import requests
 
-from src.config import Settings
+from src.config import Settings, WeatherLocation
 
 TRAFFIC_COLUMNS = (
     "link_id,link_name,borough,speed,travel_time,status,data_as_of"
@@ -80,13 +81,33 @@ def fetch_traffic(settings: Settings) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True)
 
 
-def fetch_weather(settings: Settings) -> pd.DataFrame:
-    """Hourly temperature and rain, labelled with the hour the interval begins."""
+WEATHER_COLUMNS = [
+    "location_id",
+    "hour_start",
+    "temperature_c",
+    "rain_mm",
+    "precipitation_mm",
+]
+
+
+def fetch_weather(
+    settings: Settings, locations: Iterable[WeatherLocation]
+) -> pd.DataFrame:
+    """Hourly temperature and rain per point, labelled with the hour the interval begins."""
+    frames = [_fetch_location_weather(settings, location) for location in locations]
+    if not frames:
+        return pd.DataFrame(columns=WEATHER_COLUMNS)
+    return pd.concat(frames, ignore_index=True)
+
+
+def _fetch_location_weather(
+    settings: Settings, location: WeatherLocation
+) -> pd.DataFrame:
     payload = _get_json(
         settings.weather_url,
         {
-            "latitude": settings.latitude,
-            "longitude": settings.longitude,
+            "latitude": location.latitude,
+            "longitude": location.longitude,
             "start_date": settings.start_date,
             "end_date": settings.end_date,
             "hourly": "temperature_2m,rain,precipitation",
@@ -94,7 +115,9 @@ def fetch_weather(settings: Settings) -> pd.DataFrame:
         },
     )
     if not isinstance(payload, dict) or "hourly" not in payload:
-        raise RuntimeError("Open-Meteo did not return hourly weather.")
+        raise RuntimeError(
+            f"Open-Meteo did not return hourly weather for {location.borough}."
+        )
 
     weather = pd.DataFrame(payload["hourly"])
     expected = {"time", "temperature_2m", "rain", "precipitation"}
@@ -117,16 +140,9 @@ def fetch_weather(settings: Settings) -> pd.DataFrame:
     )
     for column in ("temperature_c", "rain_mm", "precipitation_mm"):
         weather[column] = pd.to_numeric(weather[column], errors="coerce")
-    weather["location_id"] = settings.location_id
+    weather["location_id"] = location.location_id
     print(
-        f"Weather {settings.start_date} to {settings.end_date}: {len(weather)} hours"
+        f"Weather {location.borough} {settings.start_date} to "
+        f"{settings.end_date}: {len(weather)} hours"
     )
-    return weather[
-        [
-            "location_id",
-            "hour_start",
-            "temperature_c",
-            "rain_mm",
-            "precipitation_mm",
-        ]
-    ]
+    return weather[WEATHER_COLUMNS]

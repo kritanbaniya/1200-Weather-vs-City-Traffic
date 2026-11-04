@@ -6,10 +6,15 @@ import argparse
 
 import pandas as pd
 
-from src.config import Settings
+from src.config import WEATHER_LOCATIONS, Settings
 from src.extract import fetch_traffic, fetch_weather
 from src.load_mysql import count_view_rows, load
-from src.transform import aggregate_traffic, clean_traffic, join_weather
+from src.transform import (
+    aggregate_traffic,
+    assign_weather_locations,
+    clean_traffic,
+    join_weather,
+)
 
 
 def _print_summary(
@@ -29,6 +34,14 @@ def _print_summary(
     print(f"Hours missing weather: {int((~matched).sum())}")
     print(f"Rain hours: {int(raining.sum())}")
 
+    by_borough = (
+        joined.assign(raining=raining)
+        .groupby("borough", dropna=False)
+        .agg(links=("link_id", "nunique"), hours=("hour_start", "size"), rain_hours=("raining", "sum"))
+    )
+    print("\nBY BOROUGH")
+    print(by_borough.to_string())
+
     if raining.any() and dry.any():
         rain_time = joined.loc[raining, "avg_travel_time_sec"].mean()
         dry_time = joined.loc[dry, "avg_travel_time_sec"].mean()
@@ -43,6 +56,7 @@ def _print_summary(
         [
             "hour_start",
             "link_name",
+            "borough",
             "avg_speed_mph",
             "avg_travel_time_sec",
             "temperature_c",
@@ -66,8 +80,13 @@ def run(settings: Settings, skip_load: bool = False) -> pd.DataFrame:
 
     raw_traffic = fetch_traffic(settings)
     clean = clean_traffic(raw_traffic, settings.traffic_timezone)
-    traffic_hourly = aggregate_traffic(clean)
-    weather = fetch_weather(settings)
+    traffic_hourly = assign_weather_locations(aggregate_traffic(clean))
+    # Only request weather for the boroughs these links are actually in.
+    needed = set(traffic_hourly["location_id"].dropna().astype(int))
+    weather = fetch_weather(
+        settings,
+        [location for location in WEATHER_LOCATIONS if location.location_id in needed],
+    )
     joined = join_weather(traffic_hourly, weather)
     _print_summary(len(raw_traffic), len(clean), joined)
 

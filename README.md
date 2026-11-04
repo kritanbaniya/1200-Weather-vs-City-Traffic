@@ -29,8 +29,13 @@ for each run. Those values can change as the source APIs revise historical data.
 The rainy-versus-dry comparison only checks the join; it is not a regression or
 an A/B test.
 
-Weather is taken at the selected Bronx segment's midpoint (latitude `40.83242`,
-longitude `-73.85833`). Missing rain remains unknown (`NULL` / nullable
+Weather is fetched per borough, not per road. `WEATHER_LOCATIONS` in
+`src/config.py` defines one Open-Meteo point for each of the five boroughs, and
+each link uses its borough's point based on the `borough` field NYC DOT returns.
+The pipeline only requests weather for the boroughs that the selected links are
+in. The Bronx point is still the midpoint of link `4616253` (latitude `40.83242`,
+longitude `-73.85833`). A link with a missing or unrecognised borough gets
+`NULL` weather instead of borrowing another borough's. Missing rain remains unknown (`NULL` / nullable
 `is_raining`) rather than being treated as dry. Some hours have weather but no
 traffic reading, so the weather and joined-row counts can differ.
 
@@ -40,11 +45,11 @@ The rows are in a local MySQL database named `weather_traffic`. They are not com
 
 | Object | Contents |
 |---|---|
-| `locations` | The Bronx road weather point |
-| `road_links` | Link id, road name, and borough |
+| `locations` | One weather point per borough |
+| `road_links` | Link id, road name, borough, and its weather `location_id` |
 | `weather_hourly` | Temperature (°C) and rain (mm) |
 | `traffic_hourly` | Average speed (mph), average travel time (seconds), and reading count |
-| `vw_hourly_weather_traffic` | The join Tableau should use, including `temperature_f` and `is_raining` |
+| `vw_hourly_weather_traffic` | The join Tableau should use, including `weather_location`, `temperature_f`, and `is_raining` |
 
 ## Run it
 
@@ -66,6 +71,29 @@ python -m src.pipeline --start 2026-10-19 --end 2026-10-25 --links 4616253
 python -m src.pipeline --skip-load
 ```
 
+Several roads in different boroughs (each gets its own borough's weather):
+
+```bash
+python -m src.pipeline --links 4616253,4616328,4616257 --skip-load
+```
+
+To list every link the API currently reports, with its borough:
+
+```bash
+curl -s 'https://data.cityofnewyork.us/resource/i4gi-tjb9.json?$select=distinct%20link_id,link_name,borough&$where=data_as_of%3E%3D%272026-10-01T00:00:00%27&$limit=1000'
+```
+
+Coverage is about 125 links, mostly highways, bridges, and tunnels rather than
+neighborhood streets. Not all of them are usable: for 1–25 October 2026 only
+about 79 had a status `0` reading at least half the time. Many others report
+nothing but `-101` sensor flags, which cleaning drops. That includes every link
+near Harlem (RFK/Triborough Bridge at E 116th St and Major Deegan at 142nd St).
+Check the `status` of a link before you rely on it. Traffic is downloaded one link and one day at a time, so a
+run over many links and weeks makes thousands of requests and takes a while.
+
+Databases created before per-borough weather are upgraded on the next load: the
+loader adds `road_links.location_id` and recreates the view.
+
 `--skip-load` still calls the APIs and prints the join summary, without writing to MySQL. A full run replaces the requested date window and leaves rows outside that window in place.
 
 ## Tableau
@@ -80,4 +108,4 @@ Refreshing Tableau after another pipeline run reads the updated MySQL rows. The 
 
 ## What is still open
 
-The course project still needs a locked research question, a regression of weather against delay or speed, an A/B comparison against a model that also uses yesterday’s traffic, three Tableau dashboards, and a recommendation. This branch stops at the joined hourly dataset for one link.
+The course project still needs a locked research question, a regression of weather against delay or speed, an A/B comparison against a model that also uses yesterday’s traffic, three Tableau dashboards, and a recommendation. This branch stops at the joined hourly dataset.

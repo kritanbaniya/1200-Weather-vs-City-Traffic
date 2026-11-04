@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 import pymysql
 
-from src.config import PROJECT_ROOT, Settings
+from src.config import PROJECT_ROOT, WEATHER_LOCATIONS, Settings
 
 SCHEMA_PATH = PROJECT_ROOT / "sql" / "schema.sql"
 
@@ -58,6 +58,37 @@ def _executemany(
         cursor.executemany(sql, rows)
 
 
+def _apply_schema(cursor: pymysql.cursors.Cursor) -> None:
+    """Create tables, upgrade databases from the single-location layout, then views."""
+    statements = _sql_statements(SCHEMA_PATH)
+    views = [s for s in statements if s.upper().startswith("CREATE OR REPLACE VIEW")]
+    for statement in statements:
+        if statement not in views:
+            cursor.execute(statement)
+
+    # Databases created before per-borough weather have no road_links.location_id.
+    cursor.execute(
+        """
+        SELECT COUNT(*) FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'road_links'
+          AND column_name = 'location_id'
+        """
+    )
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("ALTER TABLE road_links ADD COLUMN location_id INT NULL")
+        cursor.execute(
+            """
+            ALTER TABLE road_links
+            ADD CONSTRAINT fk_road_link_location
+            FOREIGN KEY (location_id) REFERENCES locations (location_id)
+            """
+        )
+
+    for statement in views:
+        cursor.execute(statement)
+
+
 def load(
     settings: Settings,
     traffic_hourly: pd.DataFrame,
@@ -67,10 +98,10 @@ def load(
     connection = _connect(settings)
     try:
         with connection.cursor() as cursor:
-            for statement in _sql_statements(SCHEMA_PATH):
-                cursor.execute(statement)
+            _apply_schema(cursor)
 
-            cursor.execute(
+            _executemany(
+                cursor,
                 """
                 INSERT INTO locations (location_id, name, latitude, longitude)
                 VALUES (%s, %s, %s, %s)
@@ -79,30 +110,39 @@ def load(
                     latitude = VALUES(latitude),
                     longitude = VALUES(longitude)
                 """,
-                (
-                    settings.location_id,
-                    settings.location_name,
-                    settings.latitude,
-                    settings.longitude,
-                ),
+                [
+                    (
+                        location.location_id,
+                        location.name,
+                        location.latitude,
+                        location.longitude,
+                    )
+                    for location in WEATHER_LOCATIONS
+                ],
             )
 
             links = (
-                traffic_hourly[["link_id", "link_name", "borough"]]
+                traffic_hourly[["link_id", "link_name", "borough", "location_id"]]
                 .drop_duplicates(subset=["link_id"])
                 .itertuples(index=False)
             )
             _executemany(
                 cursor,
                 """
-                INSERT INTO road_links (link_id, link_name, borough)
-                VALUES (%s, %s, %s)
+                INSERT INTO road_links (link_id, link_name, borough, location_id)
+                VALUES (%s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     link_name = VALUES(link_name),
-                    borough = VALUES(borough)
+                    borough = VALUES(borough),
+                    location_id = VALUES(location_id)
                 """,
                 [
-                    (str(link.link_id), link.link_name, _none_if_na(link.borough))
+                    (
+                        str(link.link_id),
+                        link.link_name,
+                        _none_if_na(link.borough),
+                        None if pd.isna(link.location_id) else int(link.location_id),
+                    )
                     for link in links
                 ],
             )
@@ -113,14 +153,17 @@ def load(
                 settings.start_date, "%Y-%m-%d"
             ) - timedelta(hours=1)
             hour_end = settings.end_date + " 23:59:59"
-            cursor.execute(
-                """
-                DELETE FROM weather_hourly
-                WHERE location_id = %s
-                  AND hour_start BETWEEN %s AND %s
-                """,
-                (settings.location_id, hour_start, hour_end),
-            )
+            location_ids = sorted({int(value) for value in weather["location_id"]})
+            if location_ids:
+                location_placeholders = ", ".join(["%s"] * len(location_ids))
+                cursor.execute(
+                    f"""
+                    DELETE FROM weather_hourly
+                    WHERE location_id IN ({location_placeholders})
+                      AND hour_start BETWEEN %s AND %s
+                    """,
+                    (*location_ids, hour_start, hour_end),
+                )
             _executemany(
                 cursor,
                 """

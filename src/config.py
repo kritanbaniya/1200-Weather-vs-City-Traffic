@@ -12,13 +12,40 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(PROJECT_ROOT / ".env")
 
-# Midpoint of link 4616253, CBE E Taylor Avenue – Castle Hill Avenue, Bronx.
-# NYC DOT's link geometry runs from (40.8347204, -73.86593) to
-# (40.8301105, -73.850731).
-BRONX_LATITUDE = 40.83242
-BRONX_LONGITUDE = -73.85833
-BRONX_LOCATION_ID = 1
-BRONX_LOCATION_NAME = "Bronx - CBE E Taylor Avenue / Castle Hill Avenue"
+@dataclass(frozen=True)
+class WeatherLocation:
+    """One Open-Meteo point. Every road link in a borough shares its point."""
+
+    location_id: int
+    borough: str
+    name: str
+    latitude: float
+    longitude: float
+
+
+# One weather point per borough. Open-Meteo's grid is a few kilometres wide, so
+# a point per road link would add requests without adding much detail.
+# The Bronx point stays at the midpoint of link 4616253 (CBE E Taylor Avenue –
+# Castle Hill Avenue) and keeps location_id 1, so rows loaded before
+# per-borough weather still line up. The other points sit near the DOT links
+# in each borough rather than at the borough's geographic centre.
+WEATHER_LOCATIONS: tuple[WeatherLocation, ...] = (
+    WeatherLocation(1, "Bronx", "Bronx - Cross Bronx Expwy / Castle Hill Ave", 40.83242, -73.85833),
+    WeatherLocation(2, "Manhattan", "Manhattan - Midtown West Side", 40.76000, -73.99000),
+    WeatherLocation(3, "Brooklyn", "Brooklyn - Gowanus Expwy / Sunset Park", 40.66000, -74.00000),
+    WeatherLocation(4, "Queens", "Queens - Central Queens", 40.72820, -73.79490),
+    WeatherLocation(5, "Staten Island", "Staten Island - Central", 40.57950, -74.15020),
+)
+_LOCATIONS_BY_BOROUGH = {
+    location.borough.casefold(): location for location in WEATHER_LOCATIONS
+}
+
+
+def location_for_borough(borough: object) -> WeatherLocation | None:
+    """Return the weather point for a NYC DOT borough name, or None if unknown."""
+    if not isinstance(borough, str):
+        return None
+    return _LOCATIONS_BY_BOROUGH.get(" ".join(borough.split()).casefold())
 
 
 def _link_ids(raw: str) -> tuple[str, ...]:
@@ -32,10 +59,6 @@ def _link_ids(raw: str) -> tuple[str, ...]:
 class Settings:
     traffic_url: str = "https://data.cityofnewyork.us/resource/i4gi-tjb9.json"
     weather_url: str = "https://archive-api.open-meteo.com/v1/archive"
-    latitude: float = BRONX_LATITUDE
-    longitude: float = BRONX_LONGITUDE
-    location_id: int = BRONX_LOCATION_ID
-    location_name: str = BRONX_LOCATION_NAME
     # NYC DOT's unoffset data_as_of values are local New York civil time.
     traffic_timezone: str = "America/New_York"
     timezone: str = "America/New_York"
